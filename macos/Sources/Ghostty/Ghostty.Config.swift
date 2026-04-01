@@ -77,6 +77,12 @@ extension Ghostty {
             }
 
             ghostty_config_load_recursive_files(cfg)
+
+            // MonoGhostty：在用户配置与 config-file 链之后合并应用包内片段（copy-on-select=clipboard）。
+            // macOS 上 true 只写 selection 板，⌘V 需 clipboard 模式；无 bundle 资源时跳过。
+            if let monoDefaultsPath = Bundle.main.path(forResource: "MonoGhosttyGhosttyDefaults", ofType: "ghostty") {
+                monoDefaultsPath.withCString { ghostty_config_load_file(cfg, $0) }
+            }
 #endif
 
             // TODO: we'd probably do some config loading here... for now we'd
