@@ -133,7 +133,7 @@ struct CommandPaletteView: View {
                     break
                 }
             }
-            .onChange(of: query) { newValue in
+            .onChange(of: query) { _, newValue in
                 // If the user types a query then we want to make sure the first
                 // value is selected. If the user clears the query and we were selecting
                 // the first, we unset any selection.
@@ -177,7 +177,7 @@ struct CommandPaletteView: View {
         .shadow(radius: 32, x: 0, y: 12)
         .padding()
         .environment(\.colorScheme, scheme)
-        .onChange(of: isPresented) { newValue in
+        .onChange(of: isPresented) { _, newValue in
             // Reset focus when quickly showing and hiding.
             // macOS will destroy this view after a while,
             // so task/onAppear will not be called again.
@@ -272,7 +272,7 @@ private struct CommandPaletteQuery: View {
                 .frame(height: 48)
                 .textFieldStyle(.plain)
                 .focused($isTextFieldFocused)
-                .onChange(of: isTextFieldFocused) { focused in
+                .onChange(of: isTextFieldFocused) { _, focused in
                     if !focused {
                         onEvent?(.exit)
                     }
@@ -320,7 +320,7 @@ private struct CommandTable: View {
                     .padding(10)
                 }
                 .frame(maxHeight: 200)
-                .onChange(of: selectedIndex) { _ in
+                .onChange(of: selectedIndex) { _, _ in
                     guard let selectedIndex,
                           selectedIndex < options.count else { return }
                     proxy.scrollTo(

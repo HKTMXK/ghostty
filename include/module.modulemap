@@ -1,7 +1,38 @@
 // This makes Ghostty available to the XCode build for the macOS app.
 // We append "Kit" to it not to be cute, but because targets have to have
 // unique names and we use Ghostty for other things.
+//
+// ghostty/vt/*.h 与主嵌入 API（ghostty.h）分立；若在 xcframework/Headers 中一并分发，
+// Clang 会要求 umbrella 逐一枚举。exclude 声明其为有意不参与 GhosttyKit 模块导出，
+// 消除「umbrella header does not include …」告警。
 module GhosttyKit {
     umbrella header "ghostty.h"
     export *
+
+    exclude header "ghostty/vt.h"
+    exclude header "ghostty/vt/allocator.h"
+    exclude header "ghostty/vt/build_info.h"
+    exclude header "ghostty/vt/color.h"
+    exclude header "ghostty/vt/device.h"
+    exclude header "ghostty/vt/focus.h"
+    exclude header "ghostty/vt/formatter.h"
+    exclude header "ghostty/vt/grid_ref.h"
+    exclude header "ghostty/vt/key.h"
+    exclude header "ghostty/vt/key/encoder.h"
+    exclude header "ghostty/vt/key/event.h"
+    exclude header "ghostty/vt/modes.h"
+    exclude header "ghostty/vt/mouse.h"
+    exclude header "ghostty/vt/mouse/encoder.h"
+    exclude header "ghostty/vt/mouse/event.h"
+    exclude header "ghostty/vt/osc.h"
+    exclude header "ghostty/vt/paste.h"
+    exclude header "ghostty/vt/point.h"
+    exclude header "ghostty/vt/render.h"
+    exclude header "ghostty/vt/screen.h"
+    exclude header "ghostty/vt/sgr.h"
+    exclude header "ghostty/vt/size_report.h"
+    exclude header "ghostty/vt/style.h"
+    exclude header "ghostty/vt/terminal.h"
+    exclude header "ghostty/vt/types.h"
+    exclude header "ghostty/vt/wasm.h"
 }
