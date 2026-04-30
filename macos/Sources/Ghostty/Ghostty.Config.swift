@@ -83,6 +83,9 @@ extension Ghostty {
             if let monoDefaultsPath = Bundle.main.path(forResource: "MonoGhosttyGhosttyDefaults", ofType: "ghostty") {
                 monoDefaultsPath.withCString { ghostty_config_load_file(cfg, $0) }
             }
+            // 托管 tmux 的 scrollback 叠层**不可**在此处加载：`ghostty_config_finalize` 在处理 `theme=` 时会
+            // loadTheme→replay `_replay_steps` 重写配置链，finalize **之前**写入的 scrollback-limit 可能被盖回默认值。
+            // 叠层须在第一次 finalize **之后**再 `load_file`，并视需要再做一次 finalize（仅 macOS、且叠层文件存在）。
 #endif
 
             // TODO: we'd probably do some config loading here... for now we'd
@@ -92,6 +95,28 @@ extension Ghostty {
             if finalize {
                 // Finalize will make our defaults available.
                 ghostty_config_finalize(cfg)
+#if os(macOS)
+                let tmuxHostedOverlay = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("MonoGhostty", isDirectory: true)
+                    .appendingPathComponent("ghostty-hosted-tmux.overlay.ghostty", isDirectory: false)
+                    .path
+                if FileManager.default.fileExists(atPath: tmuxHostedOverlay) {
+                    tmuxHostedOverlay.withCString { ghostty_config_load_file(cfg, $0) }
+                    // 第二次 finalize：把叠层键并入 finalize 链路（finalize 自述为幂等；仅当有叠层时调用以免无谓开销）。
+                    ghostty_config_finalize(cfg)
+                    var scrollbackLimit: UInt = 0
+                    let sk = "scrollback-limit"
+                    if ghostty_config_get(cfg, &scrollbackLimit, sk, UInt(sk.lengthOfBytes(using: .utf8))) {
+                        Ghostty.logger.notice(
+                            "MonoGhostty: 托管 tmux scrollback 叠层已载入（finalize 后），effective scrollback-limit=\(scrollbackLimit) bytes；path=\(tmuxHostedOverlay, privacy: .public)"
+                        )
+                    } else {
+                        Ghostty.logger.notice(
+                            "MonoGhostty: 托管 tmux 叠层已 load_file 但未读到 scrollback-limit；path=\(tmuxHostedOverlay, privacy: .public)"
+                        )
+                    }
+                }
+#endif
             }
             // Log any configuration errors. These will be automatically shown in a
             // pop-up window too.

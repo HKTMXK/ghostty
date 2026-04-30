@@ -595,6 +595,11 @@ pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
                 .{ .all = true },
             );
 
+            // eraseRows on the active grid can push erased lines into scrollback (similar
+            // to eraseDisplay.complete's scroll_complete path). wipe scrollback again
+            // after this step so Cmd+K with history=true actually removes prior output.
+            if (history) self.terminal.eraseDisplay(.scrollback, false);
+
             return;
         }
 
@@ -606,6 +611,11 @@ pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
         // self.terminal.markSemanticPrompt(.command);
         // assert(!self.terminal.cursorIsAtPrompt());
         self.terminal.eraseDisplay(.complete, false);
+        // eraseDisplay(.complete) may scrollClear() at a semantic prompt
+        // (Terminal.zig), pushing cleared lines into scrollback. clear_screen with
+        // history=true (Cmd+K) must wipe those again — otherwise scrolling up still
+        // shows "previous" output even though the live screen looks clean.
+        if (history) self.terminal.eraseDisplay(.scrollback, false);
     }
 
     // If we reached here it means we're at a prompt, so we send a form-feed.
