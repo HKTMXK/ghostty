@@ -28,13 +28,26 @@ enum TerminalSplitOperation {
 struct TerminalSplitTreeView: View {
     let tree: SplitTree<Ghostty.SurfaceView>
     let action: (TerminalSplitOperation) -> Void
+    /// MonoGhostty：在每个分屏格子上叠加 pane 信息浮层（可选；上游默认无）。
+    var paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
+
+    init(
+        tree: SplitTree<Ghostty.SurfaceView>,
+        action: @escaping (TerminalSplitOperation) -> Void,
+        paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)? = nil
+    ) {
+        self.tree = tree
+        self.action = action
+        self.paneAccessory = paneAccessory
+    }
 
     var body: some View {
         if let node = tree.zoomed ?? tree.root {
             TerminalSplitSubtreeView(
                 node: node,
                 isRoot: node == tree.root,
-                action: action)
+                action: action,
+                paneAccessory: paneAccessory)
             // This is necessary because we can't rely on SwiftUI's implicit
             // structural identity to detect changes to this view. Due to
             // the tree structure of splits it could result in bad behaviors.
@@ -50,11 +63,16 @@ private struct TerminalSplitSubtreeView: View {
     let node: SplitTree<Ghostty.SurfaceView>.Node
     var isRoot: Bool = false
     let action: (TerminalSplitOperation) -> Void
+    let paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
 
     var body: some View {
         switch node {
         case .leaf(let leafView):
-            TerminalSplitLeaf(surfaceView: leafView, isSplit: !isRoot, action: action)
+            TerminalSplitLeaf(
+                surfaceView: leafView,
+                isSplit: !isRoot,
+                action: action,
+                paneAccessory: paneAccessory)
 
         case .split(let split):
             let splitViewDirection: SplitViewDirection = switch split.direction {
@@ -72,10 +90,10 @@ private struct TerminalSplitSubtreeView: View {
                 dividerColor: ghostty.config.splitDividerColor,
                 resizeIncrements: .init(width: 1, height: 1),
                 left: {
-                    TerminalSplitSubtreeView(node: split.left, action: action)
+                    TerminalSplitSubtreeView(node: split.left, action: action, paneAccessory: paneAccessory)
                 },
                 right: {
-                    TerminalSplitSubtreeView(node: split.right, action: action)
+                    TerminalSplitSubtreeView(node: split.right, action: action, paneAccessory: paneAccessory)
                 },
                 onEqualize: {
                     guard let surface = node.leftmostLeaf().surface else { return }
@@ -90,9 +108,11 @@ private struct TerminalSplitLeaf: View {
     let surfaceView: Ghostty.SurfaceView
     let isSplit: Bool
     let action: (TerminalSplitOperation) -> Void
+    let paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
 
     @State private var dropState: DropState = .idle
     @State private var isSelfDragging: Bool = false
+    @State private var paneAccessoryPresented = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -117,6 +137,12 @@ private struct TerminalSplitLeaf: View {
                 if !isSelfDragging, case .dropping(let zone) = dropState {
                     zone.overlay(in: geometry)
                         .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let paneAccessory {
+                    paneAccessory(surfaceView, $paneAccessoryPresented)
+                        .allowsHitTesting(true)
                 }
             }
             .onPreferenceChange(Ghostty.DraggingSurfaceKey.self) { value in
