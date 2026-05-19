@@ -665,6 +665,11 @@ extension Ghostty {
                   event.window != nil,
                   window == event.window else { return event }
 
+            // MonoGhostty：设置页 / 命令浮层等遮挡终端时，勿抢第一响应者（否则会吞掉 UI 的第一次点击）。
+            guard SplitTreeProviderRegistry.shared.shouldHandleLocalMouseFocus(for: self) else {
+                return event
+            }
+
             // The clicked location in this window should be this view.
             let location = convert(event.locationInWindow, from: nil)
             guard hitTest(location) == self else { return event }
@@ -684,12 +689,14 @@ extension Ghostty {
             // get forwarded to the terminal as a mouse click.
             if NSApp.isActive && window.isKeyWindow {
                 window.makeFirstResponder(self)
+                SplitTreeProviderRegistry.shared.noteLocalMouseFocus(on: self)
                 suppressNextLeftMouseUp = true
                 return nil
             }
 
             // Make ourselves the first responder
             window.makeFirstResponder(self)
+            SplitTreeProviderRegistry.shared.noteLocalMouseFocus(on: self)
 
             // We have to keep processing the event so that AppKit can properly
             // focus the window and dispatch events. If you return nil here then
