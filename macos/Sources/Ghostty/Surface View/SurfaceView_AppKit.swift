@@ -673,6 +673,15 @@ extension Ghostty {
             // The clicked location in this window should be this view.
             let location = convert(event.locationInWindow, from: nil)
             guard hitTest(location) == self else { return event }
+            let mouseFocusState = MainActor.assumeIsolated {
+                let registry = SplitTreeProviderRegistry.shared
+                let shouldHandle = registry.shouldHandleLocalMouseFocus(for: self)
+                if shouldHandle {
+                    registry.noteLocalMouseFocus(on: self)
+                }
+                return shouldHandle
+            }
+            guard mouseFocusState else { return event }
 
             // We always assume that we're resetting our mouse suppression
             // unless we see the specific scenario below to set it.

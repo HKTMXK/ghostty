@@ -30,6 +30,7 @@ struct TerminalSplitTreeView: View {
     let action: (TerminalSplitOperation) -> Void
     /// MonoGhostty：在每个分屏格子上叠加 pane 信息浮层（可选；上游默认无）。
     var paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
+    @State private var presentedAccessorySurfaceID: Ghostty.SurfaceView.ID?
 
     init(
         tree: SplitTree<Ghostty.SurfaceView>,
@@ -47,6 +48,7 @@ struct TerminalSplitTreeView: View {
                 node: node,
                 isRoot: node == tree.root,
                 action: action,
+                presentedAccessorySurfaceID: $presentedAccessorySurfaceID,
                 paneAccessory: paneAccessory)
             // This is necessary because we can't rely on SwiftUI's implicit
             // structural identity to detect changes to this view. Due to
@@ -63,7 +65,8 @@ private struct TerminalSplitSubtreeView: View {
     let node: SplitTree<Ghostty.SurfaceView>.Node
     var isRoot: Bool = false
     let action: (TerminalSplitOperation) -> Void
-    let paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
+    @Binding var presentedAccessorySurfaceID: Ghostty.SurfaceView.ID?
+    var paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
 
     var body: some View {
         switch node {
@@ -72,6 +75,7 @@ private struct TerminalSplitSubtreeView: View {
                 surfaceView: leafView,
                 isSplit: !isRoot,
                 action: action,
+                presentedAccessorySurfaceID: $presentedAccessorySurfaceID,
                 paneAccessory: paneAccessory)
 
         case .split(let split):
@@ -90,10 +94,18 @@ private struct TerminalSplitSubtreeView: View {
                 dividerColor: ghostty.config.splitDividerColor,
                 resizeIncrements: .init(width: 1, height: 1),
                 left: {
-                    TerminalSplitSubtreeView(node: split.left, action: action, paneAccessory: paneAccessory)
+                    TerminalSplitSubtreeView(
+                        node: split.left,
+                        action: action,
+                        presentedAccessorySurfaceID: $presentedAccessorySurfaceID,
+                        paneAccessory: paneAccessory)
                 },
                 right: {
-                    TerminalSplitSubtreeView(node: split.right, action: action, paneAccessory: paneAccessory)
+                    TerminalSplitSubtreeView(
+                        node: split.right,
+                        action: action,
+                        presentedAccessorySurfaceID: $presentedAccessorySurfaceID,
+                        paneAccessory: paneAccessory)
                 },
                 onEqualize: {
                     guard let surface = node.leftmostLeaf().surface else { return }
@@ -108,11 +120,20 @@ private struct TerminalSplitLeaf: View {
     let surfaceView: Ghostty.SurfaceView
     let isSplit: Bool
     let action: (TerminalSplitOperation) -> Void
-    let paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
+    @Binding var presentedAccessorySurfaceID: Ghostty.SurfaceView.ID?
+    var paneAccessory: ((Ghostty.SurfaceView, Binding<Bool>) -> AnyView)?
 
     @State private var dropState: DropState = .idle
     @State private var isSelfDragging: Bool = false
-    @State private var paneAccessoryPresented = false
+
+    private var isPaneAccessoryPresented: Binding<Bool> {
+        .init(
+            get: { presentedAccessorySurfaceID == surfaceView.id },
+            set: { isPresented in
+                presentedAccessorySurfaceID = isPresented ? surfaceView.id : nil
+            }
+        )
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -139,11 +160,17 @@ private struct TerminalSplitLeaf: View {
                         .allowsHitTesting(false)
                 }
             }
-            .overlay(alignment: .topTrailing) {
-                if let paneAccessory {
-                    paneAccessory(surfaceView, $paneAccessoryPresented)
-                        .allowsHitTesting(true)
+            .overlay {
+                if presentedAccessorySurfaceID != nil {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            presentedAccessorySurfaceID = nil
+                        }
                 }
+            }
+            .overlay(alignment: .topTrailing) {
+                paneAccessory?(surfaceView, isPaneAccessoryPresented)
             }
             .onPreferenceChange(Ghostty.DraggingSurfaceKey.self) { value in
                 isSelfDragging = value == surfaceView.id
