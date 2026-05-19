@@ -396,6 +396,7 @@ typedef enum {
   GHOSTTY_POINT_ACTIVE,
   GHOSTTY_POINT_VIEWPORT,
   GHOSTTY_POINT_SCREEN,
+  GHOSTTY_POINT_HISTORY,
   GHOSTTY_POINT_SURFACE,
 } ghostty_point_tag_e;
 
@@ -1101,6 +1102,14 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                     ghostty_input_key_s,
                                     ghostty_binding_flags_e*);
 void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
+/// Feed bytes into the terminal display parser only (does not write to the PTY).
+void ghostty_surface_feed_display_output(ghostty_surface_t, const char*, uintptr_t);
+/// Prepend plain text to scrollback without writing to the PTY or replacing the viewport.
+void ghostty_surface_prepend_scrollback_plaintext(ghostty_surface_t,
+                                                  const char*,
+                                                  uintptr_t);
+/// Clear mouse-tracking display state without writing escape sequences to the PTY.
+void ghostty_surface_clear_display_mouse_modes(ghostty_surface_t);
 void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
 bool ghostty_surface_mouse_captured(ghostty_surface_t);
 bool ghostty_surface_mouse_button(ghostty_surface_t,

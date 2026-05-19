@@ -31,6 +31,7 @@ const pagepkg = @import("page.zig");
 const style = @import("style.zig");
 const Screen = @import("Screen.zig");
 const ScreenSet = @import("ScreenSet.zig");
+const PageList = @import("PageList.zig");
 const Page = pagepkg.Page;
 const Cell = pagepkg.Cell;
 const Row = pagepkg.Row;
@@ -278,6 +279,162 @@ pub fn printString(self: *Terminal, str: []const u8) !void {
 
             else => try self.print(cp),
         }
+    }
+}
+
+/// Backing store for one active viewport row (cells + row metadata).
+const ViewportRowBackup = struct {
+    row: Row,
+    cells: []Cell,
+};
+
+/// Prepend plain-text lines to scrollback without writing to the PTY.
+/// Preserves active viewport cells (styles, wide chars, hyperlinks).
+pub fn prependScrollbackPlaintext(self: *Terminal, text: []const u8) !void {
+    if (text.len == 0) return;
+    if (self.screens.active_key != .primary) return;
+    if (self.status_display != .main) return;
+
+    const active = self.screens.active;
+    const alloc = active.alloc;
+    const pages = &active.pages;
+
+    var history_lines = try splitPlaintextLines(alloc, text);
+    defer history_lines.deinit(alloc);
+    const count = history_lines.items.len;
+    if (count == 0) return;
+
+    const old_x = active.cursor.x;
+    const old_y = active.cursor.y;
+    const old_wrap = active.cursor.pending_wrap;
+    defer {
+        active.cursorAbsolute(old_x, old_y);
+        active.cursor.pending_wrap = old_wrap;
+    }
+
+    const backup = try backupActiveViewport(alloc, pages);
+    defer freeActiveViewportBackup(alloc, backup);
+
+    for (0..count) |_| _ = try pages.grow();
+
+    var pin = pages.getTopLeft(.history);
+    for (history_lines.items) |line| {
+        writePlaintextRowAtPin(pin, line, self.cols);
+        pin = pin.down(1) orelse break;
+    }
+
+    restoreActiveViewport(pages, backup);
+
+    pages.viewport = .active;
+    pages.viewport_pin_row_offset = null;
+}
+
+fn backupActiveViewport(alloc: Allocator, pages: *PageList) ![]ViewportRowBackup {
+    const list = try alloc.alloc(ViewportRowBackup, pages.rows);
+    errdefer {
+        for (list) |*entry| alloc.free(entry.cells);
+        alloc.free(list);
+    }
+
+    var pin = pages.getTopLeft(.active);
+    for (list) |*entry| {
+        entry.row = pin.rowAndCell().row.*;
+        entry.cells = try alloc.dupe(Cell, pin.cells(.all));
+        pin = pin.down(1) orelse return error.ViewportBackupFailed;
+    }
+    return list;
+}
+
+fn freeActiveViewportBackup(alloc: Allocator, backup: []ViewportRowBackup) void {
+    for (backup) |entry| alloc.free(entry.cells);
+    alloc.free(backup);
+}
+
+fn restoreActiveViewport(pages: *PageList, backup: []ViewportRowBackup) void {
+    var pin = pages.getTopLeft(.active);
+    for (backup) |saved| {
+        const rac = pin.rowAndCell();
+        const page = &pin.node.data;
+        const cells = page.getCells(rac.row);
+        @memcpy(cells, saved.cells);
+        rac.row.* = saved.row;
+        rac.row.dirty = true;
+        page.dirty = true;
+        pin = pin.down(1) orelse break;
+    }
+}
+
+fn writePlaintextRowAtPin(pin: PageList.Pin, line: []const u8, cols: usize) void {
+    const page = &pin.node.data;
+    const rac = pin.rowAndCell();
+    page.clearCells(rac.row, 0, cols);
+    const cells = page.getCells(rac.row);
+
+    var col: usize = 0;
+    var it = (std.unicode.Utf8View.init(line) catch return).iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (col >= cols) break;
+        if (cp < 0x20 and cp != '\t') continue;
+        if (cp == '\t') {
+            const tab_stop = 8;
+            col = (col / tab_stop + 1) * tab_stop;
+            continue;
+        }
+        const width: usize = if (cp <= 0xFF) 1 else @intCast(unicode.table.get(cp).width);
+        if (width == 0) continue;
+        if (col + width > cols) break;
+
+        cells[col] = .{};
+        cells[col].content_tag = .codepoint;
+        cells[col].content.codepoint = cp;
+        if (width == 2 and col + 1 < cols) {
+            cells[col].wide = .wide;
+            cells[col + 1] = .{};
+            cells[col + 1].wide = .spacer_tail;
+            col += 2;
+        } else {
+            col += 1;
+        }
+    }
+
+    rac.row.dirty = true;
+    page.dirty = true;
+}
+
+fn splitPlaintextLines(alloc: Allocator, text: []const u8) !std.ArrayList([]const u8) {
+    var list: std.ArrayList([]const u8) = .empty;
+    errdefer list.deinit(alloc);
+
+    var start: usize = 0;
+    for (text, 0..) |c, i| {
+        if (c != '\n') continue;
+        const end = if (i > 0 and text[i - 1] == '\r') i - 1 else i;
+        try list.append(alloc, text[start..end]);
+        start = i + 1;
+    }
+    if (start < text.len) {
+        var end = text.len;
+        if (text[end - 1] == '\r') end -= 1;
+        try list.append(alloc, text[start..end]);
+    } else if (text.len > 0 and text[text.len - 1] == '\n') {
+        try list.append(alloc, "");
+    }
+    return list;
+}
+
+fn printSanitizedLine(self: *Terminal, line: []const u8) !void {
+    const strip: []const u8 = &.{
+        0x00, 0x08, 0x05, 0x04, 0x1B, 0x7F,
+        0x03, 0x1C, 0x15, 0x1A, 0x11, 0x13,
+        0x17, 0x16, 0x12, 0x0F,
+    };
+    for (line) |byte| {
+        const c: u21 = byte;
+        if (std.mem.indexOfScalar(u8, strip, byte) != null) {
+            try self.print(' ');
+            continue;
+        }
+        try self.print(c);
     }
 }
 
@@ -6783,6 +6940,34 @@ test "Terminal: scrollUp full top/bottomleft/right scroll region" {
         defer testing.allocator.free(str);
         try testing.expectEqualStrings("top\n\n\n\nA   E", str);
     }
+}
+
+test "Terminal: prependScrollbackPlaintext preserves active viewport" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .rows = 5, .cols = 10, .max_scrollback = 1000 });
+    defer t.deinit(alloc);
+
+    try t.printString("LIVE1\nLIVE2\nLIVE3\nLIVE4\nLIVE5");
+    t.clearDirty();
+
+    try t.prependScrollbackPlaintext("HIST1\nHIST2\n");
+
+    const scrollback = t.screens.active.pages.total_rows - t.rows;
+    try testing.expect(scrollback >= 2);
+
+    t.scrollViewport(.{ .top = {} });
+    const str = try t.plainString(alloc);
+    defer alloc.free(str);
+    try testing.expect(std.mem.indexOf(u8, str, "HIST1") != null);
+    try testing.expect(std.mem.indexOf(u8, str, "HIST2") != null);
+    try testing.expect(std.mem.indexOf(u8, str, "LIVE5") != null);
+
+    // Active viewport content must be unchanged (styles/plain text).
+    t.scrollViewport(.{ .bottom = {} });
+    const active_only = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
+    defer alloc.free(active_only);
+    try testing.expect(std.mem.indexOf(u8, active_only, "LIVE1") != null);
+    try testing.expect(std.mem.indexOf(u8, active_only, "LIVE5") != null);
 }
 
 test "Terminal: scrollUp creates scrollback in primary screen" {

@@ -1044,7 +1044,18 @@ extension Ghostty {
         }
 
         override func mouseDragged(with event: NSEvent) {
-            self.mouseMoved(with: event)
+            let pos = self.convert(event.locationInWindow, from: nil)
+            mouseLocationInSurface = pos
+            guard let surfaceModel else {
+                super.mouseDragged(with: event)
+                return
+            }
+            let mouseEvent = Ghostty.Input.MousePosEvent(
+                x: pos.x,
+                y: frame.height - pos.y,
+                mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
+            )
+            surfaceModel.sendMousePos(mouseEvent)
         }
 
         override func rightMouseDragged(with event: NSEvent) {

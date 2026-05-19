@@ -1804,6 +1804,64 @@ pub const CAPI = struct {
         surface.textCallback(ptr[0..len]);
     }
 
+    /// Inject output into the terminal grid / scrollback without writing to the PTY.
+    /// Used by embedders to restore scrollback after reattaching sessions.
+    export fn ghostty_surface_feed_display_output(
+        surface: *Surface,
+        ptr: [*]const u8,
+        len: usize,
+    ) void {
+        if (len == 0) return;
+        surface.core_surface.io.processOutput(ptr[0..len]);
+    }
+
+    /// Prepend plain text to scrollback only; does not write to the PTY or replace
+    /// the active viewport. Used when reattaching tmux sessions to Ghostty.
+    export fn ghostty_surface_prepend_scrollback_plaintext(
+        surface: *Surface,
+        ptr: [*]const u8,
+        len: usize,
+    ) void {
+        if (len == 0) return;
+        const io = &surface.core_surface.io;
+        io.renderer_state.mutex.lock();
+        defer io.renderer_state.mutex.unlock();
+        io.terminal.prependScrollbackPlaintext(ptr[0..len]) catch |err| {
+            log.warn("error prepending scrollback err={}", .{err});
+            return;
+        };
+        io.terminal_stream.handler.queueRender() catch {};
+        // NSScrollView document height comes from scrollbar actions; push immediately
+        // so wheel scrolling works right after reattach without waiting for a frame.
+        const scrollbar = io.terminal.screens.active.pages.scrollbar();
+        _ = surface.app.performAction(
+            .{ .surface = &surface.core_surface },
+            .scrollbar,
+            scrollbar,
+        ) catch |err| {
+            log.warn("failed to notify scrollbar after prepend err={}", .{err});
+        };
+    }
+
+    /// Clear mouse-tracking parser state without writing to the PTY (embedder use).
+    export fn ghostty_surface_clear_display_mouse_modes(surface: *Surface) void {
+        const io = &surface.core_surface.io;
+        io.renderer_state.mutex.lock();
+        defer io.renderer_state.mutex.unlock();
+        const t = &io.terminal;
+        t.flags.mouse_event = .none;
+        t.flags.mouse_format = .x10;
+        t.modes.set(.mouse_event_x10, false);
+        t.modes.set(.mouse_event_normal, false);
+        t.modes.set(.mouse_event_button, false);
+        t.modes.set(.mouse_event_any, false);
+        t.modes.set(.mouse_format_utf8, false);
+        t.modes.set(.mouse_format_sgr, false);
+        t.modes.set(.mouse_format_urxvt, false);
+        t.modes.set(.mouse_format_sgr_pixels, false);
+        io.terminal_stream.handler.queueRender() catch {};
+    }
+
     /// Set the preedit text for the surface. This is used for IME
     /// composition. If the length is 0, then the preedit text is cleared.
     export fn ghostty_surface_preedit(
